@@ -1,4 +1,4 @@
-package org.example.synchronization;
+package org.example.explicitlock;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,24 +10,24 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("[synchronization] synchronized 키워드 테스트")
+@DisplayName("[explicitlock] ReentrantLock 테스트")
 class ProductConcurrencyTest {
 
     @Test
-    @DisplayName("[synchronized ✅] 1000개 스레드가 동시에 증가 → 정확한 값")
-    void synchronized_동시에_재고_증가_시_정확한_값() throws InterruptedException {
+    @DisplayName("[ReentrantLock ✅] 1000개 스레드가 동시에 증가 → 정확한 값")
+    void reentrantLock_동시에_재고_증가_시_정확한_값() throws InterruptedException {
         Product product = new Product(1L, "MacBook", 0L, 2000000L);
         int threadCount = 1000;
 
         long finalQuantity = runConcurrentIncrement(product, threadCount);
 
-        System.out.printf("[synchronized ✅] 예상: %d, 실제: %d%n", threadCount, finalQuantity);
-        assertEquals(threadCount, finalQuantity, "synchronized로 동기화되어 정확히 " + threadCount + "이어야 함");
+        System.out.printf("[ReentrantLock ✅] 예상: %d, 실제: %d%n", threadCount, finalQuantity);
+        assertEquals(threadCount, finalQuantity, "ReentrantLock으로 동기화되어 정확히 " + threadCount + "이어야 함");
     }
 
     @Test
-    @DisplayName("[synchronized ✅] 재고 감소 테스트")
-    void synchronized_재고_감소_테스트() throws InterruptedException {
+    @DisplayName("[ReentrantLock ✅] 재고 감소 테스트")
+    void reentrantLock_재고_감소_테스트() throws InterruptedException {
         Product product = new Product(1L, "MacBook", 100L, 2000000L);
         int threadCount = 100;
 
