@@ -28,7 +28,9 @@ public class Product {
      * 재고가 충분할 때만 감소 (낙관적 락 패턴)
      */
     public boolean decrement(long quantity) {
-        while (true) {
+        final int MAX_RETRIES = 100;
+        int retries = 0;
+        while (retries < MAX_RETRIES) {
             long current = this.quantity.get();
             if (current < quantity) {
                 return false;
@@ -38,7 +40,13 @@ public class Product {
                 return true;
             }
             // CAS 실패 시 재시도 (다른 스레드가 먼저 변경한 경우)
+            retries++;
         }
+
+        // 재시도 횟수 초과 시 예외 발생
+        throw new IllegalStateException(
+            String.format("Failed to decrement after %d retries due to high contention", MAX_RETRIES)
+        );
     }
 
     public long getQuantity() {
