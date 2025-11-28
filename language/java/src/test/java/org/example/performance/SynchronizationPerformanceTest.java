@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 1. AtomicLong (CAS, Lock-Free)
  * 2. synchronized (암묵적 락)
  * 3. ReentrantLock (명시적 락)
+ * 4. ReadWriteLock (읽기/쓰기 분리 락)
  *
  * 테스트 시나리오:
  * - 낮은 경합 (Low Contention): 4 threads, 1,000 재고, 각 1씩 감소
@@ -66,8 +67,9 @@ class SynchronizationPerformanceTest {
         TestResult atomicResult = measureAtomicPerformance(threads, operationsPerThread, initialStock);
         TestResult syncResult = measureSynchronizedPerformance(threads, operationsPerThread, initialStock);
         TestResult lockResult = measureReentrantLockPerformance(threads, operationsPerThread, initialStock);
+        TestResult rwLockResult = measureReadWriteLockPerformance(threads, operationsPerThread, initialStock);
 
-        printResults("낮은 경합", atomicResult, syncResult, lockResult, initialStock);
+        printResults("낮은 경합", atomicResult, syncResult, lockResult, rwLockResult, initialStock);
     }
 
     @Test
@@ -84,8 +86,9 @@ class SynchronizationPerformanceTest {
         TestResult atomicResult = measureAtomicPerformance(threads, operationsPerThread, initialStock);
         TestResult syncResult = measureSynchronizedPerformance(threads, operationsPerThread, initialStock);
         TestResult lockResult = measureReentrantLockPerformance(threads, operationsPerThread, initialStock);
+        TestResult rwLockResult = measureReadWriteLockPerformance(threads, operationsPerThread, initialStock);
 
-        printResults("중간 경합", atomicResult, syncResult, lockResult, initialStock);
+        printResults("중간 경합", atomicResult, syncResult, lockResult, rwLockResult, initialStock);
     }
 
     @Test
@@ -102,8 +105,9 @@ class SynchronizationPerformanceTest {
         TestResult atomicResult = measureAtomicPerformance(threads, operationsPerThread, initialStock);
         TestResult syncResult = measureSynchronizedPerformance(threads, operationsPerThread, initialStock);
         TestResult lockResult = measureReentrantLockPerformance(threads, operationsPerThread, initialStock);
+        TestResult rwLockResult = measureReadWriteLockPerformance(threads, operationsPerThread, initialStock);
 
-        printResults("높은 경합", atomicResult, syncResult, lockResult, initialStock);
+        printResults("높은 경합", atomicResult, syncResult, lockResult, rwLockResult, initialStock);
     }
 
     @Test
@@ -121,8 +125,9 @@ class SynchronizationPerformanceTest {
         TestResult atomicResult = measureAtomicPerformance(threads, operationsPerThread, initialStock);
         TestResult syncResult = measureSynchronizedPerformance(threads, operationsPerThread, initialStock);
         TestResult lockResult = measureReentrantLockPerformance(threads, operationsPerThread, initialStock);
+        TestResult rwLockResult = measureReadWriteLockPerformance(threads, operationsPerThread, initialStock);
 
-        printResults("극한 경합", atomicResult, syncResult, lockResult, initialStock);
+        printResults("극한 경합", atomicResult, syncResult, lockResult, rwLockResult, initialStock);
     }
 
     /**
@@ -281,16 +286,67 @@ class SynchronizationPerformanceTest {
     }
 
     /**
+     * ReadWriteLock 성능 측정 (재고 감소 시나리오)
+     */
+    private TestResult measureReadWriteLockPerformance(int threads, int operationsPerThread, long initialStock)
+            throws InterruptedException {
+        org.example.readwritelock.Product product = new org.example.readwritelock.Product(1L, "Item", initialStock, 1000L);
+
+        AtomicLong successCount = new AtomicLong(0);
+        AtomicLong failCount = new AtomicLong(0);
+
+        long startTime = System.nanoTime();
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch endLatch = new CountDownLatch(threads);
+
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < operationsPerThread; j++) {
+                        boolean success = product.decrement(1);
+                        if (success) {
+                            successCount.incrementAndGet();
+                        } else {
+                            failCount.incrementAndGet();
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    endLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        endLatch.await();
+        executor.shutdown();
+        executor.awaitTermination(60, TimeUnit.SECONDS);
+
+        long elapsedTime = System.nanoTime() - startTime;
+        long finalStock = product.getQuantity();
+
+        System.out.printf("[ReadWriteLock] %d ms | 성공: %d, 실패: %d, 최종 재고: %d%n",
+            elapsedTime / 1_000_000, successCount.get(), failCount.get(), finalStock);
+
+        return new TestResult(elapsedTime, successCount.get(), failCount.get(), finalStock);
+    }
+
+    /**
      * 결과 출력 및 분석 + Assertion
      */
-    private void printResults(String scenario, TestResult atomic, TestResult sync, TestResult lock, long initialStock) {
+    private void printResults(String scenario, TestResult atomic, TestResult sync, TestResult lock, TestResult rwLock, long initialStock) {
         System.out.println("\n========== 결과 분석 ==========");
 
         // 1. 성능 비교 (처리 시간) - 밀리초 단위로 명확하게 표시
         long atomicMs = atomic.elapsedTimeNanos / 1_000_000;
         long syncMs = sync.elapsedTimeNanos / 1_000_000;
         long lockMs = lock.elapsedTimeNanos / 1_000_000;
-        long baseTime = Math.min(Math.min(atomic.elapsedTimeNanos, sync.elapsedTimeNanos), lock.elapsedTimeNanos);
+        long rwLockMs = rwLock.elapsedTimeNanos / 1_000_000;
+        long baseTime = Math.min(Math.min(Math.min(atomic.elapsedTimeNanos, sync.elapsedTimeNanos), lock.elapsedTimeNanos), rwLock.elapsedTimeNanos);
 
         System.out.println("\n[처리 시간 비교]");
         System.out.println("┌─────────────────┬──────────────┬──────────────┐");
@@ -299,6 +355,7 @@ class SynchronizationPerformanceTest {
         System.out.printf("│ AtomicLong      │ %,10d ms │ %.2fx        │%n", atomicMs, (double) atomic.elapsedTimeNanos / baseTime);
         System.out.printf("│ synchronized    │ %,10d ms │ %.2fx        │%n", syncMs, (double) sync.elapsedTimeNanos / baseTime);
         System.out.printf("│ ReentrantLock   │ %,10d ms │ %.2fx        │%n", lockMs, (double) lock.elapsedTimeNanos / baseTime);
+        System.out.printf("│ ReadWriteLock   │ %,10d ms │ %.2fx        │%n", rwLockMs, (double) rwLock.elapsedTimeNanos / baseTime);
         System.out.println("└─────────────────┴──────────────┴──────────────┘");
 
         // 2. 동시성 정확성 검증
@@ -312,34 +369,41 @@ class SynchronizationPerformanceTest {
             sync.successCount, sync.failCount, sync.finalStock);
         System.out.printf("│ ReentrantLock   │ %,10d   │ %,10d   │ %,10d   │%n",
             lock.successCount, lock.failCount, lock.finalStock);
+        System.out.printf("│ ReadWriteLock   │ %,10d   │ %,10d   │ %,10d   │%n",
+            rwLock.successCount, rwLock.failCount, rwLock.finalStock);
         System.out.println("└─────────────────┴──────────────┴──────────────┴──────────────┘");
 
         // 3. 데이터 일관성 검증 (초기재고 - 성공횟수 = 최종재고)
         System.out.println("\n[데이터 일관성 검증]");
-        long expectedFinalStock = initialStock - atomic.successCount;
         boolean atomicCorrect = (initialStock - atomic.successCount) == atomic.finalStock;
         boolean syncCorrect = (initialStock - sync.successCount) == sync.finalStock;
         boolean lockCorrect = (initialStock - lock.successCount) == lock.finalStock;
+        boolean rwLockCorrect = (initialStock - rwLock.successCount) == rwLock.finalStock;
 
         System.out.printf("AtomicLong:      %s (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)%n",
-            atomicCorrect ? "✅ 일관성 유지" : "❌ 불일치", initialStock, atomic.successCount, expectedFinalStock, atomic.finalStock);
+            atomicCorrect ? "✅ 일관성 유지" : "❌ 불일치", initialStock, atomic.successCount, initialStock - atomic.successCount, atomic.finalStock);
         System.out.printf("synchronized:    %s (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)%n",
             syncCorrect ? "✅ 일관성 유지" : "❌ 불일치", initialStock, sync.successCount, initialStock - sync.successCount, sync.finalStock);
         System.out.printf("ReentrantLock:   %s (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)%n",
             lockCorrect ? "✅ 일관성 유지" : "❌ 불일치", initialStock, lock.successCount, initialStock - lock.successCount, lock.finalStock);
+        System.out.printf("ReadWriteLock:   %s (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)%n",
+            rwLockCorrect ? "✅ 일관성 유지" : "❌ 불일치", initialStock, rwLock.successCount, initialStock - rwLock.successCount, rwLock.finalStock);
 
         // 4. 승자 판정
         String winner;
-        if (atomic.elapsedTimeNanos <= sync.elapsedTimeNanos && atomic.elapsedTimeNanos <= lock.elapsedTimeNanos) {
+        long minTime = Math.min(Math.min(Math.min(atomic.elapsedTimeNanos, sync.elapsedTimeNanos), lock.elapsedTimeNanos), rwLock.elapsedTimeNanos);
+        if (atomic.elapsedTimeNanos == minTime) {
             winner = "AtomicLong (Lock-Free)";
-        } else if (sync.elapsedTimeNanos <= lock.elapsedTimeNanos) {
+        } else if (sync.elapsedTimeNanos == minTime) {
             winner = "synchronized (암묵적 락)";
-        } else {
+        } else if (lock.elapsedTimeNanos == minTime) {
             winner = "ReentrantLock (명시적 락)";
+        } else {
+            winner = "ReadWriteLock (읽기/쓰기 분리 락)";
         }
 
-        System.out.printf("\n✅ %s 시나리오 최고 성능: %s%n", scenario, winner);
-        System.out.println("=====================================\n");
+        System.out.printf("%n✅ %s 시나리오 최고 성능: %s%n", scenario, winner);
+        System.out.println("=====================================%n");
 
         // 5. ✅ Assertion: 데이터 일관성 검증 (필수)
         assertEquals(initialStock - atomic.successCount, atomic.finalStock,
@@ -351,18 +415,23 @@ class SynchronizationPerformanceTest {
         assertEquals(initialStock - lock.successCount, lock.finalStock,
             String.format("ReentrantLock: 최종 재고 불일치 (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)",
                 initialStock, lock.successCount, initialStock - lock.successCount, lock.finalStock));
+        assertEquals(initialStock - rwLock.successCount, rwLock.finalStock,
+            String.format("ReadWriteLock: 최종 재고 불일치 (초기: %,d, 성공: %,d, 예상: %,d, 실제: %,d)",
+                initialStock, rwLock.successCount, initialStock - rwLock.successCount, rwLock.finalStock));
 
         // 6. ✅ Assertion: 모든 시도가 성공 또는 실패로 처리되었는지 검증
-        long totalOperations = initialStock; // 모든 시나리오에서 총 시도 횟수 = 초기 재고
-        assertEquals(totalOperations, atomic.successCount + atomic.failCount,
+        assertEquals(initialStock, atomic.successCount + atomic.failCount,
             String.format("AtomicLong: 성공+실패 횟수가 총 시도 횟수와 불일치 (성공: %,d, 실패: %,d, 합계: %,d, 예상: %,d)",
-                atomic.successCount, atomic.failCount, atomic.successCount + atomic.failCount, totalOperations));
-        assertEquals(totalOperations, sync.successCount + sync.failCount,
+                atomic.successCount, atomic.failCount, atomic.successCount + atomic.failCount, initialStock));
+        assertEquals(initialStock, sync.successCount + sync.failCount,
             String.format("synchronized: 성공+실패 횟수가 총 시도 횟수와 불일치 (성공: %,d, 실패: %,d, 합계: %,d, 예상: %,d)",
-                sync.successCount, sync.failCount, sync.successCount + sync.failCount, totalOperations));
-        assertEquals(totalOperations, lock.successCount + lock.failCount,
+                sync.successCount, sync.failCount, sync.successCount + sync.failCount, initialStock));
+        assertEquals(initialStock, lock.successCount + lock.failCount,
             String.format("ReentrantLock: 성공+실패 횟수가 총 시도 횟수와 불일치 (성공: %,d, 실패: %,d, 합계: %,d, 예상: %,d)",
-                lock.successCount, lock.failCount, lock.successCount + lock.failCount, totalOperations));
+                lock.successCount, lock.failCount, lock.successCount + lock.failCount, initialStock));
+        assertEquals(initialStock, rwLock.successCount + rwLock.failCount,
+            String.format("ReadWriteLock: 성공+실패 횟수가 총 시도 횟수와 불일치 (성공: %,d, 실패: %,d, 합계: %,d, 예상: %,d)",
+                rwLock.successCount, rwLock.failCount, rwLock.successCount + rwLock.failCount, initialStock));
 
         // 7. ✅ Assertion: 최종 재고가 음수가 되지 않는지 검증
         assertTrue(atomic.finalStock >= 0,
@@ -371,6 +440,8 @@ class SynchronizationPerformanceTest {
             String.format("synchronized: 최종 재고가 음수가 될 수 없음 (실제: %,d)", sync.finalStock));
         assertTrue(lock.finalStock >= 0,
             String.format("ReentrantLock: 최종 재고가 음수가 될 수 없음 (실제: %,d)", lock.finalStock));
+        assertTrue(rwLock.finalStock >= 0,
+            String.format("ReadWriteLock: 최종 재고가 음수가 될 수 없음 (실제: %,d)", rwLock.finalStock));
 
         // 8. ✅ Assertion: 성능 회귀 검증 (모든 방식이 합리적인 시간 내에 완료되어야 함)
         // 시나리오별 예상 최대 처리 시간 (밀리초 단위, 여유를 두고 설정)
@@ -388,5 +459,7 @@ class SynchronizationPerformanceTest {
             String.format("synchronized: 처리 시간이 너무 오래 걸림 (실제: %,d ms, 최대 허용: %,d ms)", syncMs, maxAcceptableMs));
         assertTrue(lockMs <= maxAcceptableMs,
             String.format("ReentrantLock: 처리 시간이 너무 오래 걸림 (실제: %,d ms, 최대 허용: %,d ms)", lockMs, maxAcceptableMs));
+        assertTrue(rwLockMs <= maxAcceptableMs,
+            String.format("ReadWriteLock: 처리 시간이 너무 오래 걸림 (실제: %,d ms, 최대 허용: %,d ms)", rwLockMs, maxAcceptableMs));
     }
 }
